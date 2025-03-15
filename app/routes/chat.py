@@ -17,6 +17,7 @@ class ChatRequest(BaseModel):
 
 @router.post("/chat")
 def chat_with_agent(request: ChatRequest, response: Response):
+    print("Chat Request came....")
     """
     Handles user messages, maintains conversation threads, and routes to the appropriate AI agent.
     """

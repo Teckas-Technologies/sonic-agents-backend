@@ -4,7 +4,7 @@ from langgraph.checkpoint.mongodb import MongoDBSaver
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 
 # Connect to MongoDB
-mongodb_client = MongoClient(MONGODB_URI)
+mongodb_client = MongoClient(MONGODB_URI, tlsAllowInvalidCertificates=True, tlsAllowInvalidHostnames=True)
 db = mongodb_client.get_database("memory_db")  # Database name
 messages_collection = db["messages"]  # Collection name
 agents_collection = db["agents"]

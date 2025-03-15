@@ -93,24 +93,17 @@ def create_sonic_agent():
         params = json.loads(args[0])
         print("🔹 Bridge Request Initiated:", params)
 
-        required_fields = ["source_chain", "destination_chain", "token", "amount", "recipient"]
+        required_fields = ["fromChain", "amount"]
         for field in required_fields:
             if field not in params or not params[field]:
                 return {"error": f"Missing required field: {field}"}
-
-        # ✅ Prepare Hyperlane Message
-        bridge_message = {
-            "origin_chain": params["source_chain"],
-            "destination_chain": params["destination_chain"],
-            "token": params["token"],
-            "amount": params["amount"],
-            "recipient": params["recipient"]
-        }
-
+        recipientAddress = ""
+        if "recipientAddress" in params:
+            recipientAddress = params["recipientAddress"]
         return {
-            "status": "success",
-            "message": "Bridge request prepared successfully. Please sign the transaction in the frontend.",
-            "bridge_message": bridge_message
+            "fromChain": params["fromChain"],
+            "amount": params["amount"],
+            "recipientAddress": recipientAddress
         }
 
     # ✅ Define Bridge Tool
@@ -119,16 +112,12 @@ def create_sonic_agent():
         func=prepare_bridge_request,
         description="Collects details for a cross-chain bridge transaction. "
                     "Ensure the following details are provided: "
-                    "- `source_chain`: The chain you're bridging from. Only Solana and Sonic chains are allowed. If user "
-                    "provides any different chain then tell them only Solana and Sonic or Sonic are allowed. If user "
-                    "provides destination chain then source chain is opposite by default. no need to ask the user"
-                    "- `destination_chain`: The chain you're bridging to. Only Solana and Sonic chains are allowed. If user"
-                    "provides any different chain then tell them only Solana and Sonic or Sonic are allowed. If user "
-                    "provides destination chain then source chain is opposite by default. no need to ask the user"
-                    "- `token`: The token contract address or symbol. Only SOL, SONIC, sonicSOL, USDT and USDC are "
-                    "allowed. If user enters any different coin ask them again"
+                    "- `fromChain`: The chain you're bridging from. Only Solana and Sonic chains are allowed. If user "
+                    "provides any different chain then tell them only Solana and Sonic or Sonic are allowed."
                     "- `amount`: The amount of tokens to bridge. "
-                    "- `recipient`: The recipient wallet address on the destination chain."
+                    "- `recipientAddress`: The recipient wallet address on the destination chain. This is optional. User "
+                    "May or may not provide the recipient address"
+                    "Call this tool only when all parameters are correctly provided."
     )
 
     swap_tool = Tool(
@@ -228,10 +217,8 @@ def create_sonic_agent():
         response = llm.invoke(state["messages"])
         return {"messages": state["messages"] + [response], "next": "END"}
 
-    # ✅ Build the LangGraph
     workflow = StateGraph(AgentState)
 
-    # ✅ Register Nodes
     workflow.add_node("supervisor", supervisor)
     workflow.add_node("swap_agent", swap_agent_node)
     workflow.add_node("swap_tool", ToolNode([swap_tool]))
@@ -239,7 +226,6 @@ def create_sonic_agent():
     workflow.add_node("bridge_tool", ToolNode([bridge_tool]))
     workflow.add_node("chat", chat_agent)
 
-    # ✅ Define Routing Logic
     workflow.set_entry_point("supervisor")
     workflow.add_conditional_edges("supervisor", lambda state: state["next"], {
         "swap_agent": "swap_agent",
@@ -264,17 +250,19 @@ def create_sonic_agent():
 
     workflow.add_edge("chat", END)
 
+    workflow.compile()
+
     # ✅ Compile Graph
-    mongodb_client = MongoClient(MONGODB_URI)
+    mongodb_client = MongoClient(MONGODB_URI, tlsAllowInvalidCertificates=True, tlsAllowInvalidHostnames=True)
     checkpointer = MongoDBSaver(
         mongodb_client,
-        db_name="new_memory",
+        db_name="new_memory_new",
         checkpoint_ns="AGY"
     )
 
     # ✅ Compile Graph & Register Multi-ABI Agent
     graph = workflow.compile(checkpointer=checkpointer)
-    AGENT_REGISTRY["Bridge Agent"] = {"graph": graph, "tools": [bridge_tool]}
+    AGENT_REGISTRY["sonicAgent"] = {"graph": graph}
     return graph
 
 
@@ -345,3 +333,4 @@ def load_agents_on_startup():
     Loads agents from the database into memory on startup.
     """
     create_sonic_agent()
+    print("Agents Loaded Successfully")
