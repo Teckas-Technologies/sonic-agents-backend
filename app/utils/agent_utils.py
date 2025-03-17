@@ -169,6 +169,7 @@ def create_swap_graph():
             "outputMint": allowed_tokens.get(to_token),
             "amount": amount,
             "poolId": pool_id,
+            "tokenSymbol": params["fromChain"],
             "success": True,
             "type": "swap"
         }
@@ -395,6 +396,7 @@ def coin_market_cap_graph():
     }
 
     return graph
+
 
 def get_last_ai_message(response_data):
     """
