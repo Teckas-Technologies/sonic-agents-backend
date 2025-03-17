@@ -222,6 +222,152 @@ def create_swap_graph():
     return graph
 
 
+def coin_market_cap_graph():
+    API_KEY = ""  
+    BASE_URL = "https://pro-api.coinmarketcap.com/v1"
+
+    def get_all_crypto_prices() -> dict:
+        """
+        Fetches the latest price data for all available cryptocurrencies from CoinMarketCap API.
+        """
+        listings_url = f"{BASE_URL}/cryptocurrency/listings/latest"
+        headers = {
+            "Accepts": "application/json",
+            "X-CMC_PRO_API_KEY": API_KEY
+        }
+
+        response = requests.get(listings_url, headers=headers)
+        if response.status_code != 200:
+            return {"error": f"Failed to fetch cryptocurrency listings. Status code: {response.status_code}"}
+
+        data = response.json()
+        if "data" not in data:
+            return {"error": "Invalid response structure from API."}
+
+        # Extract cryptocurrency symbols
+        crypto_symbols = [crypto["symbol"] for crypto in data["data"]]
+
+        # Fetch price data for all symbols
+        symbols_str = ",".join(crypto_symbols)
+        quotes_url = f"{BASE_URL}/cryptocurrency/quotes/latest?symbol={symbols_str}"
+
+        response = requests.get(quotes_url, headers=headers)
+        if response.status_code != 200:
+            return {"error": f"Failed to fetch cryptocurrency price data. Status code: {response.status_code}"}
+
+        price_data = response.json()
+        if "data" not in price_data:
+            return {"error": "Invalid response structure from API."}
+
+        # Process and return price data
+        crypto_prices = {}
+        for symbol in crypto_symbols:
+            if symbol in price_data["data"]:
+                crypto_data = price_data["data"][symbol]
+                price_info = crypto_data["quote"]["USD"]
+                crypto_prices[symbol] = {
+                    "name": crypto_data["name"],
+                    "symbol": crypto_data["symbol"],
+                    "price": price_info["price"],
+                    "market_cap": price_info["market_cap"],
+                    "percent_change_24h": price_info["percent_change_24h"]
+                }
+
+        return crypto_prices
+
+    crypto_price_tool = Tool(
+        name="get_all_crypto_prices",
+        func=get_all_crypto_prices,
+        description="Fetches the latest price, market cap, and 24-hour price changes for all cryptocurrencies from CoinMarketCap API."
+    )
+
+    def get_global_crypto_metrics() -> dict:
+        """
+        Fetches global cryptocurrency market metrics including total market cap,
+        trading volume, BTC & ETH dominance, stablecoin & DeFi statistics.
+        """
+        metrics_url = f"{BASE_URL}/global-metrics/quotes/latest"
+        headers = {
+            "Accepts": "application/json",
+            "X-CMC_PRO_API_KEY": API_KEY
+        }
+
+        response = requests.get(metrics_url, headers=headers)
+        if response.status_code != 200:
+            return {"error": f"Failed to fetch global crypto metrics. Status code: {response.status_code}"}
+
+        data = response.json()
+        if "data" not in data:
+            return {"error": "Invalid response structure from API."}
+
+        metrics_data = data["data"]
+        quote_usd = metrics_data["quote"]["USD"]
+
+        return {
+            "active_cryptocurrencies": metrics_data["active_cryptocurrencies"],
+            "total_cryptocurrencies": metrics_data["total_cryptocurrencies"],
+            "active_market_pairs": metrics_data["active_market_pairs"],
+            "btc_dominance": metrics_data["btc_dominance"],
+            "eth_dominance": metrics_data["eth_dominance"],
+            "total_market_cap": quote_usd["total_market_cap"],
+            "total_volume_24h": quote_usd["total_volume_24h"],
+            "defi_market_cap": quote_usd["defi_market_cap"],
+            "defi_volume_24h": quote_usd["defi_volume_24h"],
+            "stablecoin_market_cap": quote_usd["stablecoin_market_cap"],
+            "stablecoin_volume_24h": quote_usd["stablecoin_volume_24h"],
+            "derivatives_volume_24h": quote_usd["derivatives_volume_24h"],
+            "total_market_cap_yesterday": quote_usd["total_market_cap_yesterday"],
+            "total_volume_24h_yesterday": quote_usd["total_volume_24h_yesterday"],
+            "market_cap_change_24h": quote_usd["total_market_cap_yesterday_percentage_change"],
+            "volume_change_24h": quote_usd["total_volume_24h_yesterday_percentage_change"],
+            "last_updated": quote_usd["last_updated"]
+        }
+
+    global_crypto_metrics_tool = Tool(
+        name="get_global_crypto_metrics",
+        func=get_global_crypto_metrics,
+        description="Fetches global cryptocurrency market metrics including market cap, trading volume, BTC & ETH dominance, stablecoin & DeFi statistics."
+    )
+
+    # Bind AI model with tools
+    llm_with_tools = llm.bind_tools([crypto_price_tool, global_crypto_metrics_tool])
+
+    sys_msg = SystemMessage(
+        content=(
+            "You are an AI-powered Crypto Market Assistant. Your role is to provide real-time cryptocurrency price data, "
+            "global market metrics, and insights into DeFi, stablecoins, and derivatives. Use the available tools to fetch "
+            "accurate data from CoinMarketCap and guide users through their queries effectively."
+        )
+    )
+
+    def assistant(state: MessagesState):
+        """
+        AI responds to cryptocurrency-related queries.
+        - Calls get_all_crypto_prices tool for price queries.
+        - Calls get_global_crypto_metrics for market metrics queries.
+        """
+        response = llm_with_tools.invoke([sys_msg] + state["messages"])
+        return {"messages": state["messages"] + [response]}
+
+    # Define state graph
+    builder = StateGraph(MessagesState)
+    builder.add_node("tools", ToolNode([crypto_price_tool, global_crypto_metrics_tool]))
+    builder.add_node("assistant", assistant)
+    builder.add_edge(START, "assistant")
+
+    def tools_condition(state: MessagesState) -> str:
+        # Implement your condition for routing here
+        return "tools"
+
+    builder.add_conditional_edges("assistant", tools_condition)
+    graph = builder.compile()
+
+    AGENT_REGISTRY["coinMarketCapAgent"] = {
+        "graph": graph,
+        "tools": [crypto_price_tool, global_crypto_metrics_tool]
+    }
+
+    return graph
 def get_last_ai_message(response_data):
     """
     Extracts the content of the last AIMessage from the response data.
@@ -288,5 +434,7 @@ def load_agents_on_startup():
     """
     Loads agents from the database into memory on startup.
     """
+    print("Agent loaded successfully!")
     create_bridge_graph()
     create_swap_graph()
+    coin_market_cap_graph()
