@@ -105,7 +105,7 @@ def create_bridge_graph():
 
 def create_swap_graph():
     allowed_tokens = {
-        "WSOL": "So11111111111111111111111111111111111111112",
+        "SOL": "So11111111111111111111111111111111111111112",
         "USDT": "qPzdrTCvxK3bxoh2YoTZtDcGVgRUwm37aQcC3abFgBy",
         "USDC": "HbDgpvHVxeNSRCGEUFvapCYmtYfqxexWcCbxtYecruy8",
         "SONIC": "mrujEYaN1oyQXDHeYNxBYpxWKVkQ2XsGxfznpifu4aL",
@@ -115,11 +115,11 @@ def create_swap_graph():
     }
 
     allowed_swaps = {
-        ("WSOL", "SONIC"): "DgMweMfMbmPFChTuAvTf4nriQDWpf9XX3g66kod9nsR4",
-        ("WSOL", "sonicSOL"): "PVefkK6H5CL4qyBKmJaqFKYGM2bhzkpfwRhnMEUgXy4",
+        ("SOL", "SONIC"): "DgMweMfMbmPFChTuAvTf4nriQDWpf9XX3g66kod9nsR4",
+        ("SOL", "sonicSOL"): "PVefkK6H5CL4qyBKmJaqFKYGM2bhzkpfwRhnMEUgXy4",
         ("USDT", "USDC"): "Q3xCT8sxU9VVYfHSmfQDahwGe9e43Q6hfEpLLi15yLo",
-        ("WSOL", "lrtsSOL"): "BeqkciWYCaAtn2FRaXrhfkWnWSgjnBB96ovZ4toJCTKW",
-        ("WSOL", "USDT"): "28UY6pGdJxvhhg1L45nrDe8j6RPUBuneL51RJ18NBcoz",
+        ("SOL", "lrtsSOL"): "BeqkciWYCaAtn2FRaXrhfkWnWSgjnBB96ovZ4toJCTKW",
+        ("SOL", "USDT"): "28UY6pGdJxvhhg1L45nrDe8j6RPUBuneL51RJ18NBcoz",
         ("SONIC", "USDT"): "3htP3trfRffLQSYf3ixJD3kx7kkKwEyPYJceCodt9UBz",
     }
 
@@ -164,12 +164,12 @@ def create_swap_graph():
 
         # Return formatted swap transaction
         return {
-            "fromToken": from_token,
-            "fromTokenId": allowed_tokens.get(from_token),
-            "toToken": to_token,
-            "toTokenId": allowed_tokens.get(to_token),
+            "inputMint": allowed_tokens.get(from_token),
+            "outputMint": allowed_tokens.get(to_token),
             "amount": amount,
-            "poolId": pool_id
+            "poolId": pool_id,
+            "success": True,
+            "type": "swap"
         }
 
     swap_tool = Tool(
@@ -179,9 +179,9 @@ def create_swap_graph():
                     f" **Allowed Tokens:**\n{TOKEN_DESCRIPTION}\n\n"
                     f" **Allowed Swap Pairs:**\n{SWAP_DESCRIPTION}\n\n"
                     "- `fromToken` & `toToken` must be valid token names or addresses.\n"
-                    "- `amount` must be in the smallest denomination (lamports).\n"
+                    "- `amount` must be the number \n"
                     "- Only specific token pairs are allowed for swapping.\n"
-                    "Call this tool only when all parameters are correctly provided."
+                    "Call this tool only when all parameters are correctly provided.(fromToken,toToken,amount) "
     )
 
     # ✅ Bind LLM with tools
