@@ -8,6 +8,7 @@ from app.utils.openai_utils import llm
 from langgraph.checkpoint.mongodb import MongoDBSaver
 from pymongo import MongoClient
 from app.config import MONGODB_URI
+from app.config import CMC_API_KEY
 import requests
 
 AGENT_REGISTRY = {}
@@ -222,6 +223,179 @@ def create_swap_graph():
     return graph
 
 
+def coin_market_cap_graph():
+    API_KEY = CMC_API_KEY
+    BASE_URL = "https://pro-api.coinmarketcap.com/v1"
+
+    def get_all_crypto_prices(symbols: str) -> dict:
+        """
+        Fetches the latest price data for all available cryptocurrencies from CoinMarketCap API.
+        """
+        if not symbols or not isinstance(symbols, str):
+            return {"error": "No cryptocurrency symbols provided or invalid format."}
+
+        # Clean and split the string into a list of symbols
+        symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+        if not symbol_list:
+            return {"error": "No valid cryptocurrency symbols provided."}
+
+        symbols_str = ",".join(symbol_list)
+        quotes_url = f"{BASE_URL}/cryptocurrency/quotes/latest?symbol={symbols_str}"
+        headers = {
+            "Accepts": "application/json",
+            "X-CMC_PRO_API_KEY": API_KEY
+        }
+
+        response = requests.get(quotes_url, headers=headers)
+        if response.status_code != 200:
+            return {"error": f"Failed to fetch data. Status code: {response.status_code}"}
+
+        price_data = response.json()
+        if "data" not in price_data:
+            return {"error": "Invalid response structure from API."}
+
+        crypto_prices = {}
+        for symbol in symbol_list:
+            if symbol in price_data["data"]:
+                crypto_data = price_data["data"][symbol]
+                price_info = crypto_data["quote"]["USD"]
+                crypto_prices[symbol] = {
+                    "name": crypto_data["name"],
+                    "symbol": crypto_data["symbol"],
+                    "price": price_info["price"],
+                    "market_cap": price_info["market_cap"],
+                    "percent_change_24h": price_info["percent_change_24h"]
+                }
+            else:
+                crypto_prices[symbol] = {"error": "Symbol not found or invalid."}
+
+        return crypto_prices
+
+    crypto_price_tool = Tool(
+        name="get_all_crypto_prices",
+        func=get_all_crypto_prices,
+        description=(
+            "Fetches the latest price, market cap, and 24-hour price changes for specified cryptocurrencies from the CoinMarketCap API. "
+            "Ensure that valid cryptocurrency symbols are provided as input. "
+            "If users provide cryptocurrency names instead of symbols, convert them to their corresponding symbols before using this tool. "
+            "Call this tool only when all required parameters are correctly provided."
+        )
+    )
+
+    def get_global_crypto_metrics() -> dict:
+        """
+        Fetches global cryptocurrency market metrics, including total market cap,
+        trading volume, BTC & ETH dominance, stablecoin & DeFi statistics for all available currencies.
+        """
+        metrics_url = f"{BASE_URL}/global-metrics/quotes/latest"
+        headers = {
+            "Accepts": "application/json",
+            "X-CMC_PRO_API_KEY": API_KEY
+        }
+
+        try:
+            response = requests.get(metrics_url, headers=headers)
+            if response.status_code != 200:
+                return {"error": f"Failed to fetch global crypto metrics. Status code: {response.status_code}"}
+
+            data = response.json()
+            if "data" not in data:
+                return {"error": "Invalid response structure from API."}
+
+            metrics_data = data["data"]
+            quotes = metrics_data.get("quote", {})
+
+            # Build quotes for all currencies dynamically
+            all_quotes = {}
+            for currency, quote_data in quotes.items():
+                all_quotes[currency] = {
+                    "total_market_cap": quote_data.get("total_market_cap"),
+                    "total_volume_24h": quote_data.get("total_volume_24h"),
+                    "defi_market_cap": quote_data.get("defi_market_cap"),
+                    "defi_volume_24h": quote_data.get("defi_volume_24h"),
+                    "stablecoin_market_cap": quote_data.get("stablecoin_market_cap"),
+                    "stablecoin_volume_24h": quote_data.get("stablecoin_volume_24h"),
+                    "derivatives_volume_24h": quote_data.get("derivatives_volume_24h"),
+                    "total_market_cap_yesterday": quote_data.get("total_market_cap_yesterday"),
+                    "total_volume_24h_yesterday": quote_data.get("total_volume_24h_yesterday"),
+                    "market_cap_change_24h": quote_data.get("total_market_cap_yesterday_percentage_change"),
+                    "volume_change_24h": quote_data.get("total_volume_24h_yesterday_percentage_change"),
+                    "last_updated": quote_data.get("last_updated")
+                }
+
+            # Combine top-level metrics with quotes
+            result = {
+                "active_cryptocurrencies": metrics_data.get("active_cryptocurrencies"),
+                "total_cryptocurrencies": metrics_data.get("total_cryptocurrencies"),
+                "active_market_pairs": metrics_data.get("active_market_pairs"),
+                "btc_dominance": metrics_data.get("btc_dominance"),
+                "eth_dominance": metrics_data.get("eth_dominance"),
+                "last_updated": metrics_data.get("last_updated"),
+                "quotes": all_quotes
+            }
+
+            return result
+
+        except Exception as e:
+            return {"error": f"An exception occurred: {str(e)}"}
+
+    global_crypto_metrics_tool = Tool(
+        name="get_global_crypto_metrics",
+        func=get_global_crypto_metrics,
+        description=(
+            "Fetches global cryptocurrency market metrics including market cap, trading volume, BTC & ETH dominance, "
+            "stablecoin & DeFi statistics."
+        )
+    )
+
+    # Bind AI model with tools
+    llm_with_tools = llm.bind_tools([crypto_price_tool, global_crypto_metrics_tool])
+
+    sys_msg = SystemMessage(
+        content=(
+            "You are an AI-powered Crypto Market Assistant. Your role is to provide real-time cryptocurrency price data, "
+            "global market metrics, and insights into DeFi, stablecoins, and derivatives. Use the available tools to fetch "
+            "accurate data from CoinMarketCap and guide users through their queries effectively."
+        )
+    )
+
+    def assistant(state: MessagesState):
+        """
+        AI responds to cryptocurrency-related queries.
+        - Calls get_all_crypto_prices tool for price queries.
+        - Calls get_global_crypto_metrics for market metrics queries.
+        """
+        response = llm_with_tools.invoke([sys_msg] + state["messages"])
+        return {"messages": state["messages"] + [response]}
+
+    # Define state graph
+    builder = StateGraph(MessagesState)
+    builder.add_node("tools", ToolNode([crypto_price_tool, global_crypto_metrics_tool]))
+    builder.add_node("assistant", assistant)
+    builder.add_edge(START, "assistant")
+
+    def tools_condition(state: MessagesState) -> str:
+        # Implement your condition for routing here
+        return "tools"
+
+    builder.add_conditional_edges("assistant", tools_condition)
+    mongodb_client = MongoClient(MONGODB_URI, tlsAllowInvalidCertificates=True, tlsAllowInvalidHostnames=True)
+    checkpointer = MongoDBSaver(
+        mongodb_client,
+        db_name="new_memory",
+        checkpoint_ns="AGY"
+    )
+
+    # ✅ Compile Graph & Register Multi-ABI Agent
+    graph = builder.compile(checkpointer=checkpointer)
+
+    AGENT_REGISTRY["coinMarketCapAgent"] = {
+        "graph": graph,
+        "tools": [crypto_price_tool, global_crypto_metrics_tool]
+    }
+
+    return graph
+
 def get_last_ai_message(response_data):
     """
     Extracts the content of the last AIMessage from the response data.
@@ -288,5 +462,7 @@ def load_agents_on_startup():
     """
     Loads agents from the database into memory on startup.
     """
+    print("Agent loaded successfully!")
     create_bridge_graph()
     create_swap_graph()
+    coin_market_cap_graph()
